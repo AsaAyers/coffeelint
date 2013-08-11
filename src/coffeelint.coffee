@@ -581,7 +581,7 @@ class LexicalLinter
         str = ("    " for s in @variableScopes).join("")
 
         msg = "\u001b[31m" + msg + "\u001b[39m" if color
-        console.log "#{str}#{msg}"
+        # console.log "#{str}#{msg}"
 
     enterScope: ->
         @logScope 'Enter Scope'
@@ -596,7 +596,12 @@ class LexicalLinter
         @logScope 'Leave Scope'
 
     # Return an error if the given token fails a lint check, false otherwise.
+    #
+    # Because this dispatches out to other functions, there's no way (short of
+    # an archetecture change) that this can be under the complexity limit.
+    # coffeelint: disable=cyclomatic_complexity
     lintToken : (token) ->
+        # coffeelint: enable=cyclomatic_complexity
         [type, value, lineNumber] = token
 
         # @logScope "#{type}   #{value}", false
@@ -630,7 +635,8 @@ class LexicalLinter
             when "PARAM_END"              then @lintParamEnd(token)
             when "@"                      then @lintStandaloneAt(token)
             when "+", "-"                 then @lintPlus(token)
-            when "=", "MATH", "COMPARE", "LOGIC", "COMPOUND_ASSIGN"
+            when "="                      then @lintEquals(token)
+            when "MATH", "COMPARE", "LOGIC", "COMPOUND_ASSIGN"
                 @lintMath(token)
             else null
 
@@ -711,34 +717,35 @@ class LexicalLinter
         else
             null
 
+    lintEquals: (token) ->
+        if @peek(-1)[0] in [ '}', ']' ]
+            # Destructuring assignment
+            @logScope "Destructuring Assignment"
+            i = -1
+            braceCount = 1
+            destructuredVars = []
+
+            while braceCount > 0
+                t = @peek(--i)
+                if t[0] in [ '}', ']' ]
+                    braceCount++
+                else if t[0] in [ '{', '[' ]
+                    braceCount--
+                else if t[0] is ':'
+                    # {poet: {name, address: [street, city]}} = futurists
+                    # poet and address don't get assigned as variables
+                    i--
+                else if t[0] is 'IDENTIFIER'
+                    unless @peek(i - 1)[0] in [ '@', '.' ]
+                        # This will maintain the same order. It may not
+                        # matter much, but it makes this much easier to
+                        # debug.
+                        destructuredVars.unshift t[1]
+            @defineVar v for v in destructuredVars
+
+        @lintMath(token)
+
     lintMath: (token) ->
-        if token[0] is '='
-            if @peek(-1)[0] in [ '}', ']' ]
-                # Destructuring assignment
-                @logScope "Destructuring Assignment"
-                i = -1
-                braceCount = 1
-                destructuredVars = []
-
-                while braceCount > 0
-                    t = @peek(--i)
-                    if t[0] in [ '}', ']' ]
-                        braceCount++
-                    else if t[0] in [ '{', '[' ]
-                        braceCount--
-                    else if t[0] is ':'
-                        # {poet: {name, address: [street, city]}} = futurists
-                        # poet and address don't get assigned as variables
-                        i--
-                    else if t[0] is 'IDENTIFIER'
-                        unless @peek(i - 1)[0] in [ '@', '.' ]
-                            # This will maintain the same order. It may not
-                            # matter much, but it makes this much easier to
-                            # debug.
-                            destructuredVars.unshift t[1]
-                @defineVar v for v in destructuredVars
-
-
         if not token.spaced and not token.newLine
             @createLexError('space_operators', {context: token[1]})
         else
@@ -782,25 +789,28 @@ class LexicalLinter
 
         null
 
+    lintAssignment: (token) ->
+        previousToken = @peek(-1)
+        if nextToken[0] is '.' or previousToken?[0] in [ '.', '@' ]
+            # Ignore object properties
+            undefined
+        else if nextToken[0] is '=' or
+                previousToken?[0] in [ 'FOR', 'CLASS' ]
+            @defineVar key
+
+            # for key, value of foo
+            #
+            # capture `value` in a for loop
+            if previousToken?[0] is 'FOR' and nextToken[0] is ','
+                nextVar = @peek(2)
+                @defineVar nextVar[1]
+
+
     lintIdentifier: (token) ->
         key = token[1]
 
         nextToken = @peek(1)
-        unless @blockScopeAssignements
-            previousToken = @peek(-1)
-            if nextToken[0] is '.' or previousToken?[0] in [ '.', '@' ]
-                # Ignore object properties
-                undefined
-            else if nextToken[0] is '=' or
-                    previousToken?[0] in [ 'FOR', 'CLASS' ]
-                @defineVar key
-
-                # for key, value of foo
-                #
-                # capture `value` in a for loop
-                if previousToken?[0] is 'FOR' and nextToken[0] is ','
-                    nextVar = @peek(2)
-                    @defineVar nextVar[1]
+        @lintAssignment(token) unless @blockScopeAssignements
 
         # Class names might not be in a scope
         return null if not @currentBraceScope?
@@ -881,18 +891,19 @@ class LexicalLinter
         @leaveScope() if wasNewScope
         null
 
-
-    # Return an error if the given indentation token is not correct.
-    lintIndentation : (token) ->
-
+    processNewScope: ->
         if @newScopeFlag
             @enterScope()
             @defineVar t for t in @incomingParameters
             @incomingParameters.length = 0
 
-
         @indentStack.push @newScopeFlag
         @newScopeFlag = false
+
+    # Return an error if the given indentation token is not correct.
+    lintIndentation : (token) ->
+
+        @processNewScope()
 
         [type, numIndents, lineNumber] = token
 
