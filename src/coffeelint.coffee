@@ -557,21 +557,49 @@ class LexicalLinter
         @parenTokens = []   # A stack tracking the parens token pairs.
         @callTokens = []    # A stack tracking the call token pairs.
         @lines = source.split('\n')
-        @braceScopes = []   # A stack tracking keys defined in nexted scopes.
+        @braceScopes = []   # A stack tracking object keys
+        @variableScopes = [] # A stack of scopes for variables
+        @newScopeFlag = false
+        @indentStack = []
+        @incomingParameters = []
 
     # Return a list of errors encountered in the given source.
     lint : () ->
         errors = []
 
+        @enterScope()
         for token, i in @tokens
             @i = i
             error = @lintToken(token)
             errors.push(error) if error
+        @leaveScope()
         errors
+
+    # DEBUG: This is a temporary function to assist with building scope
+    # variables. It should be removed before the pull request.
+    logScope: (msg, color = true)->
+        str = ("    " for s in @variableScopes).join("")
+
+        msg = "\u001b[31m" + msg + "\u001b[39m" if color
+        console.log "#{str}#{msg}"
+
+    enterScope: ->
+        @logScope 'Enter Scope'
+        @variableScopes.push @localScope = {}
+
+    defineVar: (name) ->
+        @logScope "++++ #{name}" unless @localScope[name]?
+        @localScope[name] ?= 0
+
+    leaveScope: ->
+        @localScope = @variableScopes.pop()
+        @logScope 'Leave Scope'
 
     # Return an error if the given token fails a lint check, false otherwise.
     lintToken : (token) ->
         [type, value, lineNumber] = token
+
+        # @logScope "#{type}   #{value}", false
 
         if typeof lineNumber == "object"
             if type == 'OUTDENT' or type == 'INDENT'
@@ -585,8 +613,9 @@ class LexicalLinter
         @lineNumber = lineNumber or @lineNumber or 0
         # Now lint it.
         switch type
-            when "->"                     then @lintArrowSpacing(token)
+            when "->"                     then @lintArrow(token)
             when "INDENT"                 then @lintIndentation(token)
+            when "OUTDENT"                then @lintOutdent(token)
             when "CLASS"                  then @lintClass(token)
             when "UNARY"                  then @lintUnary(token)
             when "{","}"                  then @lintBrace(token)
@@ -598,6 +627,7 @@ class LexicalLinter
             when "JS"                     then @lintJavascript(token)
             when "CALL_START", "CALL_END" then @lintCall(token)
             when "PARAM_START"            then @lintParam(token)
+            when "PARAM_END"              then @lintParamEnd(token)
             when "@"                      then @lintStandaloneAt(token)
             when "+", "-"                 then @lintPlus(token)
             when "=", "MATH", "COMPARE", "LOGIC", "COMPOUND_ASSIGN"
@@ -682,6 +712,33 @@ class LexicalLinter
             null
 
     lintMath: (token) ->
+        if token[0] is '='
+            if @peek(-1)[0] in [ '}', ']' ]
+                # Destructuring assignment
+                @logScope "Destructuring Assignment"
+                i = -1
+                braceCount = 1
+                destructuredVars = []
+
+                while braceCount > 0
+                    t = @peek(--i)
+                    if t[0] in [ '}', ']' ]
+                        braceCount++
+                    else if t[0] in [ '{', '[' ]
+                        braceCount--
+                    else if t[0] is ':'
+                        # {poet: {name, address: [street, city]}} = futurists
+                        # poet and address don't get assigned as variables
+                        i--
+                    else if t[0] is 'IDENTIFIER'
+                        unless @peek(i - 1)[0] in [ '@', '.' ]
+                            # This will maintain the same order. It may not
+                            # matter much, but it makes this much easier to
+                            # debug.
+                            destructuredVars.unshift t[1]
+                @defineVar v for v in destructuredVars
+
+
         if not token.spaced and not token.newLine
             @createLexError('space_operators', {context: token[1]})
         else
@@ -703,18 +760,50 @@ class LexicalLinter
             return null
 
     lintParam : (token) ->
+        # Prevents default values from being promoted to the wrong scope.
+        @blockScopeAssignements = true
+        @incomingParameters = []
         nextType = @peek()[0]
         if nextType == 'PARAM_END'
             @createLexError('no_empty_param_list')
         else
             null
 
+    lintParamEnd: (token) ->
+        @blockScopeAssignements = false
+        i = 0
+        while (t = @peek(--i)) and t[0] isnt 'PARAM_START'
+            # Don't consider options a new variable since it just gets attached
+            # to this.
+            #
+            # constructor: (@options) ->
+            if t[0] is 'IDENTIFIER' and @peek(i - 1)[0] isnt '@'
+                @incomingParameters.unshift t[1]
+
+        null
+
     lintIdentifier: (token) ->
         key = token[1]
 
-        # Class names might not be in a scope
-        return null if not @currentScope?
         nextToken = @peek(1)
+        unless @blockScopeAssignements
+            previousToken = @peek(-1)
+            if nextToken[0] is '.' or previousToken?[0] in [ '.', '@' ]
+                # Ignore object properties
+                undefined
+            else if nextToken[0] is '=' or
+                    previousToken?[0] in [ 'FOR', 'CLASS' ]
+                @defineVar key
+
+                # for key, value of foo
+                #
+                # capture `value` in a for loop
+                if previousToken?[0] is 'FOR' and nextToken[0] is ','
+                    nextVar = @peek(2)
+                    @defineVar nextVar[1]
+
+        # Class names might not be in a scope
+        return null if not @currentBraceScope?
 
         # Exit if this identifier isn't being assigned. A and B
         # are identifiers, but only A should be examined:
@@ -727,18 +816,18 @@ class LexicalLinter
 
         # Added a prefix to not interfere with things like "constructor".
         key = "identifier-#{key}"
-        if @currentScope[key]
+        if @currentBraceScope[key]
             @createLexError('duplicate_key')
         else
-            @currentScope[key] = token
+            @currentBraceScope[key] = token
             null
 
     lintBrace : (token) ->
         if token[0] == '{'
-            @braceScopes.push @currentScope if @currentScope?
-            @currentScope = {}
+            @braceScopes.push @currentBraceScope if @currentBraceScope?
+            @currentBraceScope = {}
         else
-            @currentScope = @braceScopes.pop()
+            @currentBraceScope = @braceScopes.pop()
 
         if token.generated and token[0] == '{'
             # Peek back to the last line break. If there is a class
@@ -787,9 +876,24 @@ class LexicalLinter
         not isDot and not isValidProtoProperty)
             @createLexError('no_stand_alone_at')
 
+    lintOutdent: (token) ->
+        wasNewScope = @indentStack.pop()
+        @leaveScope() if wasNewScope
+        null
+
 
     # Return an error if the given indentation token is not correct.
     lintIndentation : (token) ->
+
+        if @newScopeFlag
+            @enterScope()
+            @defineVar t for t in @incomingParameters
+            @incomingParameters.length = 0
+
+
+        @indentStack.push @newScopeFlag
+        @newScopeFlag = false
+
         [type, numIndents, lineNumber] = token
 
         return null if token.generated?
@@ -849,6 +953,9 @@ class LexicalLinter
             null
 
     lintClass : (token) ->
+        # See explanation in lintArrow()
+        @newScopeFlag = true
+
         # TODO: you can do some crazy shit in CoffeeScript, like
         # class func().ClassName. Don't allow that.
 
@@ -874,6 +981,16 @@ class LexicalLinter
             @createLexError('camel_case_classes', attrs)
         else
             null
+
+    lintArrow: (token) ->
+        # The only token at the other end of the function definition is an
+        # outdent, but things like for loops will also indent and outdent.
+        # Instead of creating the scope here, this flag indicates that the next
+        # indent will create a new scope.  Single line functions will get a
+        # generated indent and outdent.
+        @newScopeFlag = true
+
+        @lintArrowSpacing(token)
 
     lintArrowSpacing : (token) ->
         # Throw error unless the following happens.
