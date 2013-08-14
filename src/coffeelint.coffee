@@ -814,6 +814,9 @@ coffeelint.registerPlugin = (PluginClass) ->
 
 coffeelint.registerPlugin require './plugin/arrow_spacing.coffee'
 
+# Expose the base class so it can be extended in 3rd party code.
+coffeelint.BasePlugin = require './base_plugin.coffee'
+
 # Check the source against the given configuration and return an array
 # of any errors found. An error is an object with the following
 # properties:
