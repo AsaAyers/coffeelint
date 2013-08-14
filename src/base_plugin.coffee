@@ -44,6 +44,9 @@ module.exports = class BasePlugin
 
     # helper functions
 
+    atEof: ->
+        @lexicalLinter.atEof()
+
     peek: ->
         @lexicalLinter.peek arguments...
 

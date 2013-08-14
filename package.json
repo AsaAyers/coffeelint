@@ -37,6 +37,6 @@
     "lint": "npm run compile && ./bin/coffeelint -f test/fixtures/coffeelint.json src/*.coffee test/*.coffee test/*.litcoffee",
     "lint-csv": "npm run compile && ./bin/coffeelint --csv -f test/fixtures/coffeelint.json src/*.coffee test/*.coffee",
     "lint-jslint": "npm run compile && ./bin/coffeelint --jslint -f test/fixtures/coffeelint.json src/*.coffee test/*.coffee",
-    "compile": "coffee -c -o lib src"
+    "compile": "coffee -c -o lib src && ./node_modules/browserify/bin/cmd.js -t coffeeify -s coffeelint -e  src/coffeelint.coffee > lib/coffeelint.js"
   }
 }
