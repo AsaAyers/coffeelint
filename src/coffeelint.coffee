@@ -7,18 +7,14 @@ CoffeeLint is freely distributable under the MIT license.
 
 
 # Coffeelint's namespace.
-coffeelint = {}
+# Browserify wrapps this file in a UMD that will set window.coffeelint to
+# exports
+coffeelint = exports
 
 if window?
-    # If we're in the browser, export out module to
-    # global scope. Assume CoffeeScript is already
-    # loaded.
-    window.coffeelint = coffeelint
+    # If we're in the browser assume CoffeeScript is already loaded.
     CoffeeScript = window.CoffeeScript
 else
-    # If we're running in node, export our module and
-    # load dependencies.
-    coffeelint = exports
     # By storing this in a variable it prevents browserify from finding this
     # dependency. If it isn't hidden there is an error attempting to inline
     # CoffeeScript.  if browserify uses `-i` to ignore the dependency it
