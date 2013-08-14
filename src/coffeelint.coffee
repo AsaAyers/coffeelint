@@ -112,6 +112,16 @@ class LineLinter
                 classIndents : null
             }
         }
+        @setupPlugins(plugins)
+
+    # Only plugins that have a level of error or warn will even get constructed.
+    setupPlugins: (plugins) ->
+        @plugins = []
+        for rule, PluginConstructor of plugins
+            level = @config[rule].level
+            if level in ['error', 'warn'] and
+                    typeof PluginConstructor::lintLine is 'function'
+                @plugins.push new PluginConstructor this, @config
 
     lint : () ->
         errors = []
@@ -125,24 +135,21 @@ class LineLinter
 
     # Return an error if the line contained failed a rule, null otherwise.
     lintLine : () ->
-        return @checkTabs() or
-               @checkTrailingWhitespace() or
+        for p in @plugins
+            # tokenApi is *temporarily* the lexicalLinter. I think it should be
+            # separated.
+            v = p.lintLine @line, this
+            if v is true
+                return @createLineError p.rule.name
+            if isObject v
+                return @createLineError p.rule.name, v
+
+        return @checkTrailingWhitespace() or
                @checkLineLength() or
                @checkTrailingSemicolon() or
                @checkLineEndings() or
                @checkComments() or
                @checkNewlinesAfterClasses()
-
-    checkTabs : () ->
-        # Only check lines that have compiled tokens. This helps
-        # us ignore tabs in the middle of multi line strings, heredocs, etc.
-        # since they are all reduced to a single token whose line number
-        # is the start of the expression.
-        indentation = @line.split(regexes.indentation)[0]
-        if @lineHasToken() and '\t' in indentation
-            @createLineError('no_tabs')
-        else
-            null
 
     checkTrailingWhitespace : () ->
         if regexes.trailingWhitespace.test(@line)
@@ -798,6 +805,7 @@ coffeelint.registerPlugin = (PluginConstructor) ->
     _plugins[PluginConstructor::rule.name] = PluginConstructor
 
 coffeelint.registerPlugin require './plugin/arrow_spacing.coffee'
+coffeelint.registerPlugin require './plugin/no_tabs.coffee'
 
 # Check the source against the given configuration and return an array
 # of any errors found. An error is an object with the following

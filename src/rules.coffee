@@ -7,14 +7,6 @@ IGNORE  = 'ignore'
 # CoffeeLint's default rule configuration.
 module.exports =
 
-    no_tabs :
-        level : ERROR
-        message : 'Line contains tab indentation'
-        description: """
-            This rule forbids tabs in indentation. Enough said. It is enabled by
-            default.
-            """
-
     no_trailing_whitespace :
         level : ERROR
         message : 'Line ends with trailing whitespace'
