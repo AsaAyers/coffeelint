@@ -1,13 +1,31 @@
 
-BasePlugin = require '../base_plugin.coffee'
+module.exports = class ArrowSpacing
 
-module.exports = class ArrowSpacing extends BasePlugin
+    rule:
+        name: 'arrow_spacing'
+        level : 'ignore'
+        message : 'Function arrow (->) must be spaced properly'
+        description: """
+            <p>This rule checks to see that there is spacing before and after
+            the arrow operator that declares a function. This rule is disabled
+            by default.</p> <p>Note that if arrow_spacing is enabled, and you
+            pass an empty function as a parameter, arrow_spacing will accept
+            either a space or no space in-between the arrow operator and the
+            parenthesis</p>
+            <pre><code># Both of this will not trigger an error,
+            # even with arrow_spacing enabled.
+            x(-> 3)
+            x( -> 3)
 
-    rule_name: 'arrow_spacing'
+            # However, this will trigger an error
+            x((a,b)-> 3)
+            </code>
+            </pre>
+             """
 
     tokens: [ '->' ]
 
-    lint : (token) ->
+    lintToken : (token, tokenApi) ->
         # Throw error unless the following happens.
         #
         # We will take a look at the previous token to see
@@ -23,13 +41,13 @@ module.exports = class ArrowSpacing extends BasePlugin
         #
         # we will accept either having a space or not having a space there.
 
-        pp = @peek(-1)
-        unless (token.spaced? or token.newLine? or @atEof()) and
+        pp = tokenApi.peek(-1)
+        unless (token.spaced? or token.newLine? or tokenApi.atEof()) and
                # Throw error unless the previous token...
                ((pp.spaced? or pp[0] is 'TERMINATOR') or #1
                 pp.generated? or #2
                 pp[0] is "INDENT" or #3
                 (pp[1] is "(" and not pp.generated?)) #4
-            @createLexError()
+            true
         else
             null
